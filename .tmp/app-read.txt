@@ -1,0 +1,649 @@
+[/workspaces/default/code/src/App.tsx#85ca]
+1:import { useState, useRef, useCallback } from 'react';
+2:
+3:type Screen = 'budget' | 'allocate' | 'shopping' | 'complete';
+4:
+5:interface Recipient {
+6:  id: string;
+7:  name: string;
+8:  emoji: string;
+9:  budget: number;
+10:  purchases: number[];
+11:}
+12:
+13:const COINS = [
+14:  { value: 10,  label: '10',   color: 'from-orange-400 to-orange-600',  size: 40 },
+15:  { value: 50,  label: '50',   color: 'from-yellow-400 to-yellow-500',  size: 44 },
+16:  { value: 100, label: '100',  color: 'from-slate-300 to-slate-500',    size: 48 },
+17:  { value: 500, label: '500',  color: 'from-yellow-500 to-amber-600',   size: 52 },
+18:];
+19:
+20:const BILL = { value: 1000, label: '1000円札', color: 'from-green-400 to-green-600' };
+21:
+22:const INIT_RECIPIENTS: Omit<Recipient, 'budget' | 'purchases'>[] = [
+23:  { id: '1', name: '自分',       emoji: '😊' },
+24:  { id: '2', name: 'お母さん', emoji: '👩' },
+25:  { id: '3', name: 'お父さん', emoji: '👨' },
+26:  { id: '4', name: '友達',     emoji: '👫' },
+27:];
+28:
+29:function PurseIcon({ size = 64, animated = false }: { size?: number; animated?: boolean }) {
+30:  return (
+31:    <svg
+32:      width={size} height={size} viewBox="0 0 80 80" fill="none"
+33:      className={animated ? 'animate-bounce' : ''}
+34:    >
+35:      <ellipse cx="40" cy="52" rx="30" ry="24" fill="#FF8FA3" />
+36:      <ellipse cx="40" cy="52" rx="27" ry="21" fill="#FFB3C6" />
+37:      <rect x="26" y="22" width="28" height="14" rx="7" fill="#FF8FA3" />
+38:      <circle cx="40" cy="28" r="4" fill="#E05070" />
+39:      <circle cx="31" cy="51" r="4.5" fill="white" />
+40:      <circle cx="49" cy="51" r="4.5" fill="white" />
+41:      <circle cx="32.5" cy="51" r="2.5" fill="#333" />
+42:      <circle cx="50.5" cy="51" r="2.5" fill="#333" />
+43:      <circle cx="33.5" cy="50" r="1" fill="white" />
+44:      <circle cx="51.5" cy="50" r="1" fill="white" />
+45:      <path d="M33 60 Q40 66 47 60" stroke="#E05070" strokeWidth="2.5" strokeLinecap="round" fill="none" />
+46:      <ellipse cx="27" cy="55" rx="4" ry="2.5" fill="#FF6B8A" opacity="0.4" />
+47:      <ellipse cx="53" cy="55" rx="4" ry="2.5" fill="#FF6B8A" opacity="0.4" />
+48:    </svg>
+49:  );
+50:}
+51:
+52:function StarBurst() {
+53:  return (
+54:    <div className="absolute inset-0 pointer-events-none overflow-hidden">
+55:      {['⭐','🌟','✨','🎊','🎉'].map((s, i) => (
+56:        <span key={i} className="absolute text-2xl animate-ping" style={{
+57:          top: `${10 + i * 18}%`, left: `${5 + i * 22}%`,
+58:          animationDelay: `${i * 0.2}s`, animationDuration: '1.5s'
+59:        }}>{s}</span>
+60:      ))}
+61:    </div>
+62:  );
+63:}
+64:
+65:export default function App() {
+66:  const [screen, setScreen]                     = useState<Screen>('budget');
+67:  const [totalBudget, setTotalBudget]           = useState(0);
+68:  const [budgetHistory, setBudgetHistory]       = useState<number[]>([]);
+69:  const [recipients, setRecipients]             = useState<Recipient[]>(
+70:    INIT_RECIPIENTS.map(r => ({ ...r, budget: 0, purchases: [] }))
+71:  );
+72:  const [selectedId, setSelectedId]             = useState<string>('1');
+73:  const [currentId, setCurrentId]               = useState<string | null>(null);
+74:  const [priceInput, setPriceInput]             = useState('');
+75:  const [newName, setNewName]                   = useState('');
+76:  const [showAddForm, setShowAddForm]           = useState(false);
+77:  const [justAdded, setJustAdded]               = useState(false);
+78:
+79:  // Drag state for budget screen
+80:  const [drag, setDrag] = useState<{
+81:    value: number; label: string; color: string; size: number; isBill: boolean;
+82:    x: number; y: number;
+83:  } | null>(null);
+84:  const [overPurse, setOverPurse] = useState(false);
+85:  const [dropFlash, setDropFlash] = useState(false);
+86:  const purseRef = useRef<HTMLDivElement>(null);
+87:
+88:  const onCoinDown = useCallback((
+89:    e: React.PointerEvent,
+90:    value: number, label: string, color: string, size: number, isBill: boolean
+91:  ) => {
+92:    e.preventDefault();
+93:    setDrag({ value, label, color, size, isBill, x: e.clientX, y: e.clientY });
+94:  }, []);
+95:
+96:  const onDragMove = useCallback((e: React.PointerEvent) => {
+97:    if (!drag) return;
+98:    const x = e.clientX, y = e.clientY;
+99:    setDrag(d => d ? { ...d, x, y } : null);
+100:    if (purseRef.current) {
+101:      const r = purseRef.current.getBoundingClientRect();
+102:      setOverPurse(x >= r.left && x <= r.right && y >= r.top && y <= r.bottom);
+103:    }
+104:  }, [drag]);
+105:
+106:  const onDragEnd = useCallback(() => {
+107:    if (!drag) return;
+108:    if (overPurse) {
+109:      setTotalBudget(p => p + drag.value);
+110:      setBudgetHistory(p => [...p, drag.value]);
+111:      setDropFlash(true);
+112:      setTimeout(() => setDropFlash(false), 400);
+113:    }
+114:    setDrag(null);
+115:    setOverPurse(false);
+116:  }, [drag, overPurse]);
+117:
+118:  const current        = recipients.find(r => r.id === currentId) ?? null;
+119:  const selected       = recipients.find(r => r.id === selectedId);
+120:  const pendingPrice   = Math.max(0, parseInt(priceInput, 10) || 0);
+121:  const totalSpent     = (current?.purchases.reduce((a, b) => a + b, 0) ?? 0)
+122:    + (screen === 'shopping' ? pendingPrice : 0);
+123:  const remaining      = (current?.budget ?? 0) - totalSpent;
+124:  const isOver         = remaining < 0;
+125:  const totalAllocated = recipients.reduce((s, r) => s + r.budget, 0);
+126:  const unallocated    = totalBudget - totalAllocated;
+127:
+128:  function addDenom(v: number) {
+129:    setTotalBudget(p => p + v);
+130:    setBudgetHistory(p => [...p, v]);
+131:  }
+132:
+133:  function removeLast() {
+134:    if (!budgetHistory.length) return;
+135:    const last = budgetHistory[budgetHistory.length - 1];
+136:    setTotalBudget(p => p - last);
+137:    setBudgetHistory(p => p.slice(0, -1));
+138:  }
+139:
+140:  function allocate(v: number) {
+141:    if (unallocated < v) return;
+142:    setRecipients(p => p.map(r => r.id === selectedId ? { ...r, budget: r.budget + v } : r));
+143:  }
+144:
+145:  function deallocate(v: number) {
+146:    const r = recipients.find(r => r.id === selectedId);
+147:    if (!r || r.budget < v) return;
+148:    setRecipients(p => p.map(r => r.id === selectedId ? { ...r, budget: r.budget - v } : r));
+149:  }
+150:
+151:  function startShopping(id: string) {
+152:    setCurrentId(id);
+153:    setPriceInput('');
+154:    setScreen('shopping');
+155:  }
+156:
+157:  function addPurchase() {
+158:    const price = pendingPrice;
+159:    if (price <= 0 || !currentId) return;
+160:    setRecipients(p => p.map(r => r.id === currentId ? { ...r, purchases: [...r.purchases, price] } : r));
+161:    setPriceInput('');
+162:    setJustAdded(true);
+163:    setTimeout(() => setJustAdded(false), 600);
+164:  }
+165:
+166:  function deletePurchase(i: number) {
+167:    if (!currentId) return;
+168:    setRecipients(p => p.map(r => r.id === currentId ? { ...r, purchases: r.purchases.filter((_, j) => j !== i) } : r));
+169:  }
+170:
+171:  function numpad(key: string) {
+172:    if (key === '⌫') { setPriceInput(p => p.slice(0, -1)); return; }
+173:    setPriceInput(p => {
+174:      const next = p + key;
+175:      return parseInt(next, 10) > 99999 ? p : next;
+176:    });
+177:  }
+178:
+179:  function addRecipient() {
+180:    if (!newName.trim()) return;
+181:    const EMOJIS = ['🙂','👴','👵','👶','🐶','🐱','⭐','🎅','🦊','🐻'];
+182:    const id = Date.now().toString();
+183:    setRecipients(p => [...p, { id, name: newName.trim(), emoji: EMOJIS[p.length % EMOJIS.length], budget: 0, purchases: [] }]);
+184:    setSelectedId(id);
+185:    setNewName('');
+186:    setShowAddForm(false);
+187:  }
+188:
+189:  function resetAll() {
+190:    setTotalBudget(0);
+191:    setBudgetHistory([]);
+192:    setRecipients(INIT_RECIPIENTS.map(r => ({ ...r, budget: 0, purchases: [] })));
+193:    setCurrentId(null);
+194:    setPriceInput('');
+195:    setSelectedId('1');
+196:    setScreen('budget');
+197:  }
+198:
+199:  // ── BUDGET SCREEN ──────────────────────────────────────────────────────────
+200:  if (screen === 'budget') {
+201:    const ALL_DENOMS = [
+202:      { value: 10,   label: '10',   color: 'from-orange-400 to-orange-600', size: 70,  isBill: false },
+203:      { value: 50,   label: '50',   color: 'from-yellow-300 to-yellow-500', size: 78,  isBill: false },
+204:      { value: 100,  label: '100',  color: 'from-slate-300 to-slate-500',   size: 88,  isBill: false },
+205:      { value: 500,  label: '500',  color: 'from-yellow-500 to-amber-600',  size: 96,  isBill: false },
+206:      { value: 1000, label: '1000', color: 'from-green-400 to-green-600',   size: 110, isBill: true  },
+207:    ];
+208:
+209:    return (
+210:      <div
+211:        className="min-h-screen bg-gradient-to-b from-sky-400 to-sky-200 flex flex-col select-none overflow-hidden"
+212:        style={{ touchAction: 'none' }}
+213:        onPointerMove={onDragMove}
+214:        onPointerUp={onDragEnd}
+215:        onPointerLeave={onDragEnd}
+216:      >
+217:        {/* Title */}
+218:        <div className="text-center pt-4 pb-1 px-4">
+219:          <h1 className="text-4xl font-black text-white drop-shadow-md">あといくら？</h1>
+220:          <p className="text-sky-100 text-sm font-bold">お買い物サポートアプリ</p>
+221:        </div>
+222:
+223:        {/* Purse drop zone */}
+224:        <div className="flex flex-col items-center justify-center px-4 py-2">
+225:          <div
+226:            ref={purseRef}
+227:            className={`relative mt-8 w-72 max-w-full min-h-52 rounded-t-xl rounded-b-3xl border-4 border-rose-400 px-4 pt-7 pb-5 text-center transition-all duration-150 ${
+228:              overPurse
+229:                ? 'bg-yellow-100 scale-105 shadow-2xl ring-4 ring-yellow-400'
+230:                : dropFlash
+231:                ? 'bg-rose-50 scale-105 shadow-xl'
+232:                : 'bg-gradient-to-b from-rose-100 to-pink-200 shadow-xl'
+233:            }`}
+234:          >
+235:            <div
+236:              aria-hidden="true"
+237:              className="pointer-events-none absolute -top-3 -inset-x-1 h-4 rounded-full border-2 border-rose-300 bg-rose-500 before:absolute before:-top-6 before:left-1/2 before:h-7 before:w-7 before:-translate-x-full before:rounded-full before:border-4 before:border-amber-200 before:bg-amber-400 before:content-[''] after:absolute after:-top-6 after:left-1/2 after:h-7 after:w-7 after:rounded-full after:border-4 after:border-amber-200 after:bg-amber-400 after:content-['']"
+238:            />
+239:            <p className="text-rose-800 text-lg font-black mt-1">
+240:              {overPurse ? 'ここで離してね！' : '使えるお金'}
+241:            </p>
+242:            <div className="flex items-baseline justify-center gap-1 mt-2">
+243:              <span className={`text-5xl font-black tabular-nums transition-all ${
+244:                dropFlash ? 'text-rose-600 scale-110' : 'text-rose-950'
+245:              }`}>
+246:                {totalBudget.toLocaleString()}
+247:              </span>
+248:              <span className="text-2xl font-bold text-rose-800">円</span>
+249:            </div>
+250:            {budgetHistory.length > 0 && (
+251:              <button
+252:                onPointerDown={e => e.stopPropagation()}
+253:                onClick={removeLast}
+254:                className="mt-3 text-sm text-rose-800 bg-white/70 border border-rose-300 rounded-full px-4 py-1 font-bold active:scale-95"
+255:              >
+256:                ⌫ 戻す
+257:              </button>
+258:            )}
+259:          </div>
+260:
+261:          <p className="text-sky-950 bg-white/90 rounded-2xl px-4 py-3 text-lg sm:text-xl font-black mt-4 text-center max-w-sm shadow-sm">
+262:            {overPurse ? 'お財布の上で離してね！' : drag ? 'お財布まで動かしてね！' : 'お金を動かしてお財布に入れてね'}
+263:          </p>
+264:        </div>
+265:
+266:        {/* Coin tray */}
+267:        <div className="bg-white/20 rounded-t-3xl px-3 pt-3 pb-2">
+268:          <div className="flex items-end justify-around mb-2">
+269:            {ALL_DENOMS.filter(d => !d.isBill).map(d => (
+270:              <div
+271:                key={d.value}
+272:                onPointerDown={e => onCoinDown(e, d.value, d.label, d.color, d.size, false)}
+273:                className={`bg-gradient-to-b ${d.color} rounded-full flex flex-col items-center justify-center shadow-lg cursor-grab active:cursor-grabbing active:scale-95 transition-transform`}
+274:                style={{ width: d.size, height: d.size, touchAction: 'none' }}
+275:              >
+276:                <span className="text-white font-black text-xl leading-none">{d.label}</span>
+277:                <span className="text-white text-sm opacity-80">円</span>
+278:              </div>
+279:            ))}
+280:          </div>
+281:          {/* Bill */}
+282:          <div
+283:            onPointerDown={e => onCoinDown(e, 1000, '1000', 'from-green-400 to-green-600', 110, true)}
+284:            className="w-full bg-gradient-to-r from-green-400 to-green-600 rounded-2xl py-4 flex items-center justify-center gap-3 shadow-lg cursor-grab active:cursor-grabbing active:scale-95 transition-transform mb-1"
+285:            style={{ touchAction: 'none' }}
+286:          >
+287:            <span className="text-3xl">💴</span>
+288:            <span className="text-white font-black text-2xl">1000円札</span>
+289:          </div>
+290:        </div>
+291:
+292:        {/* Confirm button */}
+293:        <div className="bg-white/20 px-4 pb-5 pt-8">
+294:          <button
+295:            onPointerDown={e => e.stopPropagation()}
+296:            onClick={() => totalBudget > 0 && setScreen('allocate')}
+297:            disabled={totalBudget === 0}
+298:            className="w-full bg-gradient-to-b from-green-400 to-green-600 text-white text-2xl font-black py-4 rounded-3xl shadow-xl disabled:opacity-40 active:scale-95 transition-transform"
+299:          >
+300:            この金額で決める ✓
+301:          </button>
+302:        </div>
+303:
+304:        {/* Dragged coin ghost */}
+305:        {drag && (
+306:          <div
+307:            className="fixed pointer-events-none z-50 transition-transform"
+308:            style={{
+309:              left: drag.x - (drag.isBill ? 80 : drag.size / 2),
+310:              top:  drag.y - (drag.isBill ? 24 : drag.size / 2),
+311:              transform: 'scale(1.25)',
+312:            }}
+313:          >
+314:            {drag.isBill ? (
+315:              <div className={`bg-gradient-to-r ${drag.color} rounded-2xl px-6 py-4 shadow-2xl flex items-center gap-2`}
+316:                style={{ width: 160 }}>
+317:                <span className="text-xl">💴</span>
+318:                <span className="text-white font-black text-lg">1000円</span>
+319:              </div>
+320:            ) : (
+321:              <div
+322:                className={`bg-gradient-to-b ${drag.color} rounded-full flex flex-col items-center justify-center shadow-2xl`}
+323:                style={{ width: drag.size, height: drag.size }}
+324:              >
+325:                <span className="text-white font-black text-base leading-none">{drag.label}</span>
+326:                <span className="text-white text-xs opacity-80">円</span>
+327:              </div>
+328:            )}
+329:          </div>
+330:        )}
+331:      </div>
+332:    );
+333:  }
+334:
+335:  // ── ALLOCATE SCREEN ────────────────────────────────────────────────────────
+336:  if (screen === 'allocate') return (
+337:    <div className="min-h-screen bg-gradient-to-b from-pink-400 to-pink-200 flex flex-col p-4 pt-5">
+338:      <div className="w-full max-w-md mx-auto flex flex-col">
+339:
+340:        {/* Header */}
+341:        <div className="flex items-center gap-3 mb-4">
+342:          <button
+343:            onClick={() => setScreen('budget')}
+344:            className="bg-white/30 text-white font-black text-lg w-10 h-10 rounded-full flex items-center justify-center"
+345:          >←</button>
+346:          <h2 className="text-2xl font-black text-white drop-shadow">誰に、いくら使う？</h2>
+347:        </div>
+348:
+349:        {/* Budget summary */}
+350:        <div className="bg-white rounded-2xl p-4 mb-4 flex flex-wrap gap-3 items-center justify-between shadow-sm">
+351:          <div className="flex items-center gap-3">
+352:            <PurseIcon size={48} />
+353:            <div>
+354:              <p className="text-base text-gray-500 font-bold">全体の予算</p>
+355:              <p className="font-black text-2xl tabular-nums">{totalBudget.toLocaleString()}円</p>
+356:            </div>
+357:          </div>
+358:          <div className="text-right">
+359:            <p className="text-base text-gray-500 font-bold">残り</p>
+360:            <p className={`font-black text-3xl tabular-nums ${
+361:              unallocated === 0 ? 'text-green-500' : unallocated > 0 ? 'text-orange-500' : 'text-red-500'
+362:            }`}>{unallocated.toLocaleString()}円</p>
+363:          </div>
+364:        </div>
+365:
+366:        {/* Recipient cards */}
+367:        <div className="space-y-3 mb-2">
+368:          {recipients.map(r => {
+369:            const isSel = r.id === selectedId;
+370:            return (
+371:              <div
+372:                key={r.id}
+373:                onClick={() => setSelectedId(r.id)}
+374:                className={`rounded-2xl p-4 shadow-sm cursor-pointer transition-all select-none ${
+375:                  isSel ? 'bg-pink-500 ring-4 ring-white/60 scale-[1.02]' : 'bg-white'
+376:                }`}
+377:              >
+378:                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+379:                  <span className="text-4xl">{r.emoji}</span>
+380:                  <span className={`font-black text-xl flex-1 min-w-24 break-words ${isSel ? 'text-white' : 'text-gray-800'}`}>{r.name}</span>
+381:                  <span className={`font-black text-2xl tabular-nums shrink-0 ${isSel ? 'text-white' : 'text-gray-800'}`}>
+382:                    {r.budget.toLocaleString()}円
+383:                  </span>
+384:                  {r.budget > 0 && (
+385:                    <button
+386:                      onClick={e => { e.stopPropagation(); startShopping(r.id); }}
+387:                      className={`text-base font-black px-4 py-2 rounded-xl ml-auto shrink-0 ${
+388:                        isSel ? 'bg-white text-pink-500' : 'bg-sky-400 text-white'
+389:                      }`}
+390:                    >
+391:                      買い物へ→
+392:                    </button>
+393:                  )}
+394:                </div>
+395:              </div>
+396:            );
+397:          })}
+398:
+399:          {showAddForm ? (
+400:            <div className="bg-white rounded-2xl p-4 shadow-sm">
+401:              <input
+402:                value={newName}
+403:                onChange={e => setNewName(e.target.value)}
+404:                onKeyDown={e => e.key === 'Enter' && addRecipient()}
+405:                placeholder="名前を入れてね"
+406:                className="w-full border-2 border-pink-300 rounded-xl p-3 text-lg font-bold mb-2 outline-none focus:border-pink-500"
+407:                autoFocus
+408:              />
+409:              <div className="flex gap-2">
+410:                <button onClick={addRecipient} className="flex-1 bg-pink-500 text-white font-black py-2 rounded-xl">追加</button>
+411:                <button onClick={() => setShowAddForm(false)} className="flex-1 bg-gray-100 text-gray-500 font-bold py-2 rounded-xl">やめる</button>
+412:              </div>
+413:            </div>
+414:          ) : (
+415:            <button
+416:              onClick={() => setShowAddForm(true)}
+417:              className="w-full border-2 border-pink-600 bg-white text-pink-700 text-xl font-black py-4 rounded-2xl shadow-md hover:bg-pink-50 active:scale-95 transition-transform"
+418:            >
+419:              ＋ 新しく追加する
+420:            </button>
+421:          )}
+422:        </div>
+423:
+424:        {/* Coin allocation panel */}
+425:        {selected && (
+426:          <div className="bg-white rounded-2xl p-4 shadow-sm">
+427:            <p className="text-xl text-gray-800 font-black text-center leading-relaxed mb-4">
+428:              <span className="text-pink-600">{selected.name}</span> にお金を渡そう
+429:              <br />お金をタップしてね
+430:            </p>
+431:            {/* Add coins */}
+432:            <div className="grid grid-cols-4 gap-3 items-center mb-3">
+433:              {[...COINS].reverse().map(c => (
+434:                <button
+435:                  key={c.value}
+436:                  onClick={() => allocate(c.value)}
+437:                  disabled={unallocated < c.value}
+438:                  className={`bg-gradient-to-b ${c.color} ${c.value === 500 ? 'w-16 h-16' : c.value === 100 ? 'w-15 h-15' : c.value === 50 ? 'w-14 h-14' : 'w-13 h-13'} mx-auto text-white rounded-full shadow-md flex flex-col items-center justify-center cursor-pointer select-none touch-manipulation disabled:opacity-30 active:scale-90 transition-transform`}
+439:                >
+440:                  <span className="font-black text-lg leading-tight">{c.label}</span>
+441:                  <span className="text-sm opacity-90 leading-tight">円</span>
+442:                </button>
+443:              ))}
+444:              <button
+445:                onClick={() => allocate(BILL.value)}
+446:                disabled={unallocated < BILL.value}
+447:                className={`bg-gradient-to-r ${BILL.color} col-span-4 w-full h-14 text-white rounded-xl shadow-md text-xl font-black cursor-pointer select-none touch-manipulation disabled:opacity-30 active:scale-90 transition-transform`}
+448:              >1000円</button>
+449:            </div>
+450:            {/* Remove coins */}
+451:            <div className="flex flex-wrap gap-2 justify-center">
+452:              {[...COINS].reverse().map(c => (
+453:                <button
+454:                  key={c.value}
+455:                  onClick={() => deallocate(c.value)}
+456:                  disabled={!selected || selected.budget < c.value}
+457:                  className="text-base text-red-500 border border-red-200 px-3 py-2 rounded-full disabled:opacity-30 active:scale-95 transition-transform font-bold"
+458:                >
+459:                  −{c.label}
+460:                </button>
+461:              ))}
+462:            </div>
+463:          </div>
+464:        )}
+465:      </div>
+466:    </div>
+467:  );
+468:
+469:  // ── SHOPPING SCREEN ────────────────────────────────────────────────────────
+470:  if (screen === 'shopping' && current) {
+471:    const NUMPAD = ['1','2','3','4','5','6','7','8','9','','0','⌫'];
+472:    return (
+473:      <div className="min-h-screen bg-sky-50 flex flex-col max-w-sm mx-auto">
+474:
+475:        {/* Header */}
+476:        <div className="bg-gradient-to-b from-sky-500 to-sky-400 pt-5 pb-8 px-4 text-center relative">
+477:          <div className="flex items-center mb-3">
+478:            <button onClick={() => { addPurchase(); setScreen('allocate'); }} className="text-white/80 font-bold text-sm">← 戻る</button>
+479:            <h2 className="flex-1 text-lg font-black text-white">{current.emoji} {current.name}の買い物</h2>
+480:          </div>
+481:          <div className="bg-white/20 rounded-3xl px-4 py-3">
+482:            <p className="text-sky-100 text-sm font-bold">残り</p>
+483:            <div className="flex items-baseline justify-center gap-1">
+484:              <span className={`text-6xl font-black tabular-nums ${isOver ? 'text-red-300' : 'text-white'}`}>
+485:                {isOver ? '-' : ''}{Math.abs(remaining).toLocaleString()}
+486:              </span>
+487:              <span className="text-2xl text-white/70 font-bold">円</span>
+488:            </div>
+489:          </div>
+490:        </div>
+491:
+492:        {/* Budget / Spent summary pill */}
+493:        <div className="mx-4 -mt-4 bg-white rounded-2xl shadow p-3 grid grid-cols-2 gap-2 mb-3 z-10">
+494:          <div className="bg-sky-50 rounded-xl p-2 text-center">
+495:            <p className="text-xs text-gray-400 font-bold">予算</p>
+496:            <p className="font-black text-lg tabular-nums">{current.budget.toLocaleString()}円</p>
+497:          </div>
+498:          <div className="bg-orange-50 rounded-xl p-2 text-center">
+499:            <p className="text-xs text-gray-400 font-bold">使った金額</p>
+500:            <p className="font-black text-lg tabular-nums text-orange-500">{totalSpent.toLocaleString()}円</p>
+501:          </div>
+502:        </div>
+503:
+504:        {/* Over-budget warning */}
+505:        {isOver && (
+506:          <div className="mx-4 mb-3 bg-red-100 border-2 border-red-400 rounded-2xl p-3 text-center">
+507:            <p className="text-red-600 font-black text-base">
+508:              ⚠️ 予算を{Math.abs(remaining).toLocaleString()}円オーバーしているよ！
+509:            </p>
+510:            <p className="text-red-400 text-sm font-bold mt-1">少し戻すか、安い物を探してね</p>
+511:          </div>
+512:        )}
+513:
+514:        {/* Purchase history */}
+515:        {current.purchases.length > 0 && (
+516:          <div className="mx-4 mb-3 bg-white rounded-2xl shadow-sm p-4">
+517:            <p className="text-xs text-gray-400 font-black mb-2">買った物（{current.purchases.length}件）</p>
+518:            <div className="space-y-1 max-h-36 overflow-y-auto no-scrollbar">
+519:              {current.purchases.map((price, i) => (
+520:                <div key={i} className={`flex items-center justify-between py-1.5 border-b border-gray-100 last:border-0 ${justAdded && i === current.purchases.length - 1 ? 'animate-bounce-in' : ''}`}>
+521:                  <span className="font-black text-xl tabular-nums text-gray-800">{price.toLocaleString()}円</span>
+522:                  <button
+523:                    onClick={() => deletePurchase(i)}
+524:                    className="text-red-300 hover:text-red-500 text-2xl active:scale-90 transition-all"
+525:                    aria-label="削除"
+526:                  >🗑</button>
+527:                </div>
+528:              ))}
+529:            </div>
+530:          </div>
+531:        )}
+532:
+533:        {/* Numpad input */}
+534:        <div className="mx-4 bg-white rounded-2xl shadow-sm p-4 mb-3">
+535:          <p className="text-xs text-gray-400 font-black mb-2">いくらでしたか？（税込）<br />入れた金額はすぐに計算されるよ</p>
+536:          <div className="flex items-baseline justify-end gap-1 bg-gray-50 rounded-xl px-4 py-3 mb-3">
+537:            <span className="text-4xl font-black text-gray-800 tabular-nums flex-1 text-right">
+538:              {priceInput || '0'}
+539:            </span>
+540:            <span className="text-lg text-gray-400 font-bold">円</span>
+541:          </div>
+542:          <div className="grid grid-cols-3 gap-2">
+543:            {NUMPAD.map((key, i) => (
+544:              key === '' ? <div key={i} /> : (
+545:                <button
+546:                  key={i}
+547:                  onClick={() => numpad(key)}
+548:                  className={`rounded-2xl py-4 text-2xl font-black active:scale-95 transition-transform ${
+549:                    key === '⌫'
+550:                      ? 'bg-red-100 text-red-500'
+551:                      : 'bg-sky-50 text-gray-700 hover:bg-sky-100'
+552:                  }`}
+553:                >
+554:                  {key}
+555:                </button>
+556:              )
+557:            ))}
+558:          </div>
+559:        </div>
+560:
+561:        {/* Action buttons */}
+562:        <div className="mx-4 pb-5 space-y-2">
+563:          <button
+564:            onClick={addPurchase}
+565:            disabled={pendingPrice <= 0}
+566:            className="w-full bg-gradient-to-b from-sky-400 to-sky-600 text-white text-xl font-black py-4 rounded-2xl shadow-lg disabled:opacity-40 active:scale-95 transition-transform"
+567:          >
+568:            次の商品を入れる
+569:          </button>
+570:          <button
+571:            onClick={() => { addPurchase(); setScreen('complete'); }}
+572:            className="w-full bg-gradient-to-b from-orange-400 to-orange-500 text-white text-xl font-black py-4 rounded-2xl shadow-lg active:scale-95 transition-transform"
+573:          >
+574:            終わる 🎉
+575:          </button>
+576:        </div>
+577:      </div>
+578:    );
+579:  }
+580:
+581:  // ── COMPLETE SCREEN ────────────────────────────────────────────────────────
+582:  if (screen === 'complete' && current) {
+583:    const finalSpent = current.purchases.reduce((a, b) => a + b, 0);
+584:    const finalRem   = current.budget - finalSpent;
+585:    const success    = finalRem >= 0;
+586:
+587:    return (
+588:      <div className={`min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 relative overflow-hidden ${
+589:        success
+590:          ? 'bg-gradient-to-b from-yellow-300 to-amber-200'
+591:          : 'bg-gradient-to-b from-pink-300 to-rose-200'
+592:      }`}>
+593:        {success && <StarBurst />}
+594:        <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl p-6 sm:p-8 text-center relative z-10">
+595:          <div className="text-7xl mb-3 animate-bounce-in">{success ? '🎉' : '😅'}</div>
+596:          <div className="flex justify-center">
+597:            <PurseIcon size={96} animated={success} />
+598:          </div>
+599:          <h2 className="text-4xl leading-snug font-black text-gray-800 mt-4 mb-2">
+600:            {success ? 'お買い物できたね！' : '頑張ったね！'}
+601:          </h2>
+602:          <p className={`text-xl font-black leading-relaxed mb-6 ${success ? 'text-yellow-500' : 'text-orange-400'}`}>
+603:            {success
+604:              ? '予算の中でお買い物できたよ！🌟'
+605:              : '次は予算内で試してみよう！'}
+606:          </p>
+607:
+608:          <div className={`rounded-2xl p-4 sm:p-5 mb-6 text-left space-y-4 ${success ? 'bg-yellow-50' : 'bg-pink-50'}`}>
+609:            <div className="flex flex-wrap gap-x-3 gap-y-1 justify-between items-center">
+610:              <span className="text-lg text-gray-500 font-bold">予算</span>
+611:              <span className="font-black text-2xl tabular-nums">{current.budget.toLocaleString()}円</span>
+612:            </div>
+613:            <div className="flex flex-wrap gap-x-3 gap-y-1 justify-between items-center">
+614:              <span className="text-lg text-gray-500 font-bold">使った金額</span>
+615:              <span className="font-black text-2xl tabular-nums text-orange-500">{finalSpent.toLocaleString()}円</span>
+616:            </div>
+617:            <div className="border-t border-gray-200 pt-4 flex flex-wrap gap-x-3 gap-y-1 justify-between items-center">
+618:              <span className="text-xl text-gray-600 font-black">残り</span>
+619:              <span className={`font-black text-3xl sm:text-4xl tabular-nums ${success ? 'text-green-600' : 'text-red-500'}`}>
+620:                {success ? '' : '-'}{Math.abs(finalRem).toLocaleString()}円
+621:                {!success && <span className="text-base ml-1">オーバー</span>}
+622:              </span>
+623:            </div>
+624:          </div>
+625:
+626:          <div className="flex flex-wrap gap-3">
+627:            <button
+628:              onClick={() => setScreen('allocate')}
+629:              className="flex-1 min-w-28 bg-gray-100 text-gray-700 text-lg sm:text-xl font-black py-4 rounded-2xl active:scale-95 transition-transform"
+630:            >
+631:              続けて買う
+632:            </button>
+633:            <button
+634:              onClick={resetAll}
+635:              className="flex-1 min-w-28 bg-gradient-to-b from-sky-400 to-sky-600 text-white text-lg sm:text-xl font-black py-4 rounded-2xl shadow-lg active:scale-95 transition-transform"
+636:            >
+637:              もう一度
+638:            </button>
+639:          </div>
+640:        </div>
+641:      </div>
+642:    );
+643:  }
+644:
+645:  return null;
+646:}
+
+(End of file — 646 lines.)
